@@ -1,7 +1,7 @@
 // src/screens/PokemonListScreen.js
 // Concepto: Pantalla principal con FlatList optimizado, paginación infinita y búsqueda controlada
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   FlatList,
@@ -33,11 +33,15 @@ export default function PokemonListScreen({ onSelectPokemon }) {
   const [errorMessage, setErrorMessage] = useState(null);
   const [searchResults, setSearchResults] = useState(null); // null indica que estamos viendo la lista paginada
 
+  // Concepto: useRef como candado síncrono inmediato para evitar llamadas concurrentes en onEndReached
+  const isLoadingMoreRef = useRef(false);
+
   /**
    * Concepto: Consumir API REST con fetch y async/await manejando respuesta, error y carga
    * Carga inicial o recarga de la lista paginada
    */
   const loadInitialPokemon = async () => {
+    isLoadingMoreRef.current = false;
     setIsLoadingInitial(true);
     setErrorMessage(null);
     setSearchResults(null);
@@ -63,24 +67,40 @@ export default function PokemonListScreen({ onSelectPokemon }) {
 
   /**
    * Concepto: Scroll infinito usando onEndReached en FlatList
-   * Carga los siguientes 20 Pokémon sin duplicar llamadas concurrentes
+   * Carga los siguientes 20 Pokémon sin duplicar llamadas concurrentes mediante bloqueo síncrono y deduplicación
    */
   const handleLoadMore = async () => {
     // Si ya estamos cargando más, o no hay más datos, o estamos en modo búsqueda, no ejecutamos
-    if (isLoadingMore || !hasMore || searchResults !== null || isLoadingInitial) {
+    if (
+      isLoadingMoreRef.current ||
+      isLoadingMore ||
+      !hasMore ||
+      searchResults !== null ||
+      isLoadingInitial
+    ) {
       return;
     }
 
+    // Bloqueo síncrono inmediato para llamadas concurrentes de onEndReached
+    isLoadingMoreRef.current = true;
     setIsLoadingMore(true);
+
     try {
       const data = await fetchPokemonList(offset, PAGE_LIMIT);
-      // Concepto: Inmutabilidad de estado al concatenar elementos en listas
-      setPokemonList((prev) => [...prev, ...data.results]);
+
+      // Concepto: Inmutabilidad y deduplicación por ID para garantizar keys únicas en FlatList
+      setPokemonList((prev) => {
+        const existingIds = new Set(prev.map((pokemon) => pokemon.id));
+        const uniqueNewItems = data.results.filter((pokemon) => !existingIds.has(pokemon.id));
+        return [...prev, ...uniqueNewItems];
+      });
+
       setOffset((prev) => prev + PAGE_LIMIT);
       setHasMore(data.hasMore);
     } catch (error) {
       console.warn('Error al cargar más Pokémon:', error);
     } finally {
+      isLoadingMoreRef.current = false;
       setIsLoadingMore(false);
     }
   };
@@ -117,6 +137,7 @@ export default function PokemonListScreen({ onSelectPokemon }) {
    * Limpia la búsqueda y restaura la lista original
    */
   const handleClearSearch = () => {
+    isLoadingMoreRef.current = false;
     setSearchResults(null);
     setErrorMessage(null);
   };
